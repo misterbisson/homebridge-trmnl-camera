@@ -59,7 +59,8 @@ See [docs/architecture.md](docs/architecture.md) for how each mode works interna
 | --- | --- |
 | `terminusBaseUrl` | Base URL of the Terminus instance. Only needed if any camera sets `terminusExtensionId`. |
 | `terminusEmail` / `terminusPassword` | Credentials for the Terminus account used to trigger renders (Terminus has no token-based API; this drives its session-cookie login). Only needed for Mode A cameras. |
-| `chromiumPath` | Path to a chromium/chromium-browser binary (default `chromium-browser`). Only needed if any camera sets `recipeId`. |
+| `chromiumPath` | Path to a chromium/chromium-browser binary (default `chromium-browser`). Only needed if any camera sets `recipeId`. Ignored if `chromiumServiceUrl` is set. |
+| `chromiumServiceUrl` | Base URL of a [`docker/chromium-service`](docker/chromium-service) instance instead of a local binary — for hosts where Homebridge itself runs in a container with no working Chromium (e.g. Ubuntu images, where `chromium-browser`/`firefox` are snap-transitional stubs). Takes precedence over `chromiumPath`. |
 | `cameras[].label` | Accessory name shown in the Home app. |
 | `cameras[].terminusExtensionId` | **Mode A.** Numeric ID of the Terminus extension to render (visible in its URL, e.g. `/extensions/12`). Set this or `recipeId`, not both. |
 | `cameras[].recipeId` | **Mode B.** Numeric ID of a public TRMNL Recipe (from [trmnl.com/recipes.json](https://trmnl.com/recipes.json) or a Recipe's URL). Set this or `terminusExtensionId`, not both. |

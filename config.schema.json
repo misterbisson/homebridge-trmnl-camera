@@ -28,7 +28,13 @@
         "title": "Chromium binary path",
         "type": "string",
         "default": "chromium-browser",
-        "description": "Path to a chromium/chromium-browser binary supporting --headless=new --screenshot. Only needed if any camera below sets a Recipe ID (self-contained rendering, no Terminus)."
+        "description": "Path to a chromium/chromium-browser binary supporting --headless=new --screenshot. Only needed if any camera below sets a Recipe ID. Ignored if Chromium service URL is set."
+      },
+      "chromiumServiceUrl": {
+        "title": "Chromium service URL",
+        "type": "string",
+        "format": "uri",
+        "description": "Base URL of a docker/chromium-service instance (see the plugin repo) instead of a local Chromium binary -- for hosts where Homebridge itself runs in a container with no working Chromium (e.g. Ubuntu images). Takes precedence over Chromium binary path. Only needed if any camera below sets a Recipe ID."
       },
       "cameras": {
         "title": "Cameras",

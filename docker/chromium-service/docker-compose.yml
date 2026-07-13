@@ -1,0 +1,14 @@
+services:
+  chromium:
+    build: .
+    image: homebridge-trmnl-camera-chromium-service:latest
+    restart: always
+    # Same network namespace as the Homebridge container, so it's reachable
+    # at http://localhost:3000 from there without publishing a port beyond
+    # this host (server.js binds 127.0.0.1 only).
+    network_mode: host
+    logging:
+      driver: json-file
+      options:
+        max-size: "10mb"
+        max-file: "1"

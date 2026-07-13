@@ -116,6 +116,36 @@ confirmed, actual HomeKit pairing is the remaining step.
   TRMNL account" idea that could simplify or replace this.
 - Native/third-party plugins are out of scope (see "Scope" above).
 
+### Chromium on the real target host (2026-07-14)
+
+Installing on `vanessapi`'s actual production Homebridge surfaced a real gap
+not caught by earlier testing: that Homebridge instance runs in a Docker
+container based on Ubuntu 24.04 (`armhf`), and Ubuntu's `chromium-browser`/
+`firefox` packages are both snap-transitional stubs (`Pre-Depends: snapd`) —
+`snapd` doesn't run inside plain containers (confirmed: no systemd, "Can't
+operate"). The host's own real, working `chromium-browser` (the one used for
+all the local testing above, from `archive.raspberrypi.org`, built for Debian
+bullseye) doesn't transplant cleanly either — `dpkg -i` inside the Ubuntu
+container reports ~19 missing shared libraries, and `apt-get -f install`
+"resolves" that by reverting to the useless stub rather than pulling in the
+real dependencies.
+
+**Fix**: `docker/chromium-service/` — a small separate container (Alpine,
+which ships a real, working, non-snap `chromium` package for this same
+architecture; it's also what `ffmpeg-for-homebridge` itself targets for
+32-bit ARM) running a single-endpoint HTTP wrapper (`POST /screenshot`,
+`{html, width, height}` → PNG bytes). Same ephemeral-per-render design as the
+local-binary path, just reached over `localhost` (both containers use
+`network_mode: host`) instead of a local `child_process.spawn`.
+`LocalRenderOptions.chromiumServiceUrl` (takes precedence over
+`chromiumPath`) and the matching `config.schema.json`/`platform.ts` plumbing
+make this a drop-in alternative — nothing else about the render pipeline
+changes. See `docker/chromium-service/README.md` for deployment.
+
+This doesn't touch the working production Homebridge image at all (no
+`dpkg`/`apt` hacking on a live container running other people's plugins) —
+it's a new, independent, easily-removable service.
+
 The rest of this section is a chronological technical record of how each piece
 above was built and verified — useful as reference/rationale, not required
 reading to understand current status.

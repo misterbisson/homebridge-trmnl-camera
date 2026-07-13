@@ -19,6 +19,8 @@ interface FieldValuePair {
   value: string;
 }
 
+type ChromiumOptions = { chromiumPath: string; chromiumServiceUrl?: undefined } | { chromiumPath?: undefined; chromiumServiceUrl: string };
+
 interface CameraConfig {
   label: string;
   pollIntervalSeconds?: number;
@@ -36,8 +38,10 @@ interface TrmnlCameraPlatformConfig extends PlatformConfig {
   terminusBaseUrl?: string;
   terminusEmail?: string;
   terminusPassword?: string;
-  /** Mode B: path to a chromium/chromium-browser binary supporting --headless=new --screenshot. */
+  /** Mode B: path to a chromium/chromium-browser binary supporting --headless=new --screenshot. Ignored if chromiumServiceUrl is set. */
   chromiumPath?: string;
+  /** Mode B: base URL of a docker/chromium-service instance instead of a local binary. Takes precedence over chromiumPath. */
+  chromiumServiceUrl?: string;
   cameras?: CameraConfig[];
 }
 
@@ -68,7 +72,7 @@ export class TrmnlCameraPlatform implements DynamicPlatformPlugin {
       return;
     }
 
-    const { terminusBaseUrl, terminusEmail, terminusPassword, chromiumPath, cameras } = this.config;
+    const { terminusBaseUrl, terminusEmail, terminusPassword, chromiumPath, chromiumServiceUrl, cameras } = this.config;
     if (!cameras || cameras.length === 0) {
       this.log.warn('No cameras configured.');
       return;
@@ -78,6 +82,10 @@ export class TrmnlCameraPlatform implements DynamicPlatformPlugin {
     if (terminusClient === 'missing-config') {
       return;
     }
+
+    const chromium: ChromiumOptions = chromiumServiceUrl
+      ? { chromiumServiceUrl }
+      : { chromiumPath: chromiumPath ?? DEFAULT_CHROMIUM_PATH };
 
     const seenUuids = new Set<string>();
     for (const cameraConfig of cameras) {
@@ -91,7 +99,7 @@ export class TrmnlCameraPlatform implements DynamicPlatformPlugin {
 
       const uuid = this.api.hap.uuid.generate(`${PLUGIN_NAME}:${id.mode}:${id.value}`);
       seenUuids.add(uuid);
-      this.configureCamera(uuid, cameraConfig, terminusClient, chromiumPath ?? DEFAULT_CHROMIUM_PATH, ffmpegPath);
+      this.configureCamera(uuid, cameraConfig, terminusClient, chromium, ffmpegPath);
     }
 
     const staleAccessories = this.accessories.filter((accessory) => !seenUuids.has(accessory.UUID));
@@ -135,7 +143,7 @@ export class TrmnlCameraPlatform implements DynamicPlatformPlugin {
     uuid: string,
     cameraConfig: CameraConfig,
     terminusClient: TerminusClient | undefined,
-    chromiumPath: string,
+    chromium: ChromiumOptions,
     ffmpegBinaryPath: string,
   ): void {
     const existing = this.accessories.find((accessory) => accessory.UUID === uuid);
@@ -145,7 +153,7 @@ export class TrmnlCameraPlatform implements DynamicPlatformPlugin {
     const pollIntervalSeconds = cameraConfig.pollIntervalSeconds ?? DEFAULT_POLL_INTERVAL_SECONDS;
     const streamFps = cameraConfig.streamFps ?? DEFAULT_STREAM_FPS;
 
-    const renderFn = this.buildRenderFn(cameraConfig, terminusClient, chromiumPath, ffmpegBinaryPath);
+    const renderFn = this.buildRenderFn(cameraConfig, terminusClient, chromium, ffmpegBinaryPath);
     const renderCache = new RenderCache(pollIntervalSeconds * 1000, renderFn);
 
     const streamingDelegate = new TrmnlCameraStreamingDelegate(
@@ -173,7 +181,7 @@ export class TrmnlCameraPlatform implements DynamicPlatformPlugin {
   private buildRenderFn(
     cameraConfig: CameraConfig,
     terminusClient: TerminusClient | undefined,
-    chromiumPath: string,
+    chromium: ChromiumOptions,
     ffmpegBinaryPath: string,
   ): RenderFn {
     if (cameraConfig.recipeId !== undefined) {
@@ -185,7 +193,7 @@ export class TrmnlCameraPlatform implements DynamicPlatformPlugin {
           fieldValues,
           screenWidth: cameraConfig.screenWidth,
           screenHeight: cameraConfig.screenHeight,
-          chromiumPath,
+          ...chromium,
         });
         const jpeg = contentType.includes('jpeg') ? imageBuffer : await convertToJpeg(ffmpegBinaryPath, imageBuffer);
         return { imageBuffer: jpeg, contentType: 'image/jpeg' };

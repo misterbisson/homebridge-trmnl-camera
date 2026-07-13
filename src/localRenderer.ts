@@ -56,8 +56,15 @@ export interface LocalRenderOptions {
   utcOffsetSeconds?: number;
   screenWidth?: number;
   screenHeight?: number;
-  /** Path to a chromium/chromium-browser binary supporting --headless=new --screenshot. */
+  /** Path to a chromium/chromium-browser binary supporting --headless=new --screenshot. Ignored if chromiumServiceUrl is set. */
   chromiumPath?: string;
+  /**
+   * Base URL of a chromium-service instance (see docker/chromium-service/) instead of a
+   * local binary -- for hosts where Homebridge itself runs in a container with no working
+   * Chromium (e.g. Ubuntu images, where chromium-browser/firefox are snap-transitional
+   * stubs and snapd doesn't run in containers). Takes precedence over chromiumPath.
+   */
+  chromiumServiceUrl?: string;
 }
 
 /**
@@ -84,7 +91,9 @@ export async function renderRecipe(options: LocalRenderOptions): Promise<{ image
   const width = options.screenWidth ?? DEFAULT_SCREEN_WIDTH;
   const height = options.screenHeight ?? DEFAULT_SCREEN_HEIGHT;
   const pageHtml = buildPage(contentHtml);
-  const imageBuffer = await screenshotHtml(pageHtml, width, height, options.chromiumPath ?? DEFAULT_CHROMIUM_PATH);
+  const imageBuffer = options.chromiumServiceUrl
+    ? await screenshotViaService(options.chromiumServiceUrl, pageHtml, width, height)
+    : await screenshotHtml(pageHtml, width, height, options.chromiumPath ?? DEFAULT_CHROMIUM_PATH);
 
   return { imageBuffer, contentType: 'image/png' };
 }
@@ -347,6 +356,20 @@ ${contentHtml}
 </body>
 </html>
 `;
+}
+
+/** Calls a docker/chromium-service instance instead of spawning a local binary -- see LocalRenderOptions.chromiumServiceUrl. */
+export async function screenshotViaService(serviceUrl: string, html: string, width: number, height: number): Promise<Buffer> {
+  const url = `${serviceUrl.replace(/\/+$/, '')}/screenshot`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ html, width, height }),
+  });
+  if (!res.ok) {
+    throw new Error(`chromium-service at ${url} returned HTTP ${res.status}: ${await res.text()}`);
+  }
+  return Buffer.from(await res.arrayBuffer());
 }
 
 async function screenshotHtml(html: string, width: number, height: number, chromiumPath: string): Promise<Buffer> {

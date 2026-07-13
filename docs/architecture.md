@@ -25,16 +25,71 @@ In this mode the plugin would absorb what Terminus normally provides:
 
 1. **Browse/select plugins** — inside Homebridge's config UI (a Homebridge UI X
    custom UI panel backed by the plugin's own endpoints), search TRMNL Recipes
-   and/or enter a private plugin ID.
-2. **Configure plugin options** — fetch the plugin's `settings.yml` custom-field
-   definitions (e.g. VRM Dashboard's `vrm_token` / `vrm_installation_id` /
-   `timezone`) and render a form for them, storing values per-camera.
-3. **Render** — fetch the plugin's data source with those fields Liquid-templated
-   into headers/URL (the same shape as Terminus's Exchange), render the Liquid
-   template to HTML with `liquidjs`, load TRMNL's framework CSS/JS for correct
-   layout, and screenshot via an **ephemeral** headless Chromium (spawned per
-   render, exiting after — not a persistent browser process, which was already
-   ruled out elsewhere in this project for Pi resource reasons).
+   (`trmnl.com/recipes.json`) and/or enter a private plugin ID, then download
+   its archive (`usetrmnl.com/api/plugin_settings/:id/archive`, a zip — see
+   "Recipe archive format" below).
+2. **Configure plugin options** — the archive's `settings.yml` has a
+   `custom_fields` array (e.g. VRM Dashboard's `vrm_token` /
+   `vrm_installation_id` / `timezone`); render a form from it and store the
+   entered values per-camera.
+3. **Render** — fetch the plugin's data source (`polling_url` /
+   `polling_headers` / `polling_body`, Liquid-templated with the custom field
+   values — the same shape as Terminus's Exchange), render `full.liquid` to
+   HTML with `liquidjs`, wrap it in a page that hotlinks
+   `trmnl.com/css/latest/plugins.css` + `.../plugins.js` (see below — this
+   matches Terminus's own behavior, not a new integration), and screenshot via
+   an **ephemeral** headless Chromium (spawned per render, exiting after — not
+   a persistent browser process, which was already ruled out elsewhere in this
+   project for Pi resource reasons).
+
+### Recipe archive format (confirmed 2026-07-12, from Terminus's own import code and a real downloaded Recipe)
+
+Traced from `usetrmnl/terminus`'s
+`app/aspects/extensions/importers/remote/*` (the code Terminus itself uses to
+import a Recipe) and a real archive pulled for a live Recipe (id 369398,
+"Shakespeare Quotes"):
+
+- `GET https://usetrmnl.com/api/plugin_settings/:id/archive` returns a zip, no
+  auth required. Confirmed contents for a polling-strategy Recipe: `settings.yml`,
+  `full.liquid`, `half_horizontal.liquid`, `half_vertical.liquid`,
+  `quadrant.liquid` (and optionally `shared.liquid`, a partial some Recipes
+  prepend to every layout — not present in this one). Mode B only needs
+  `full.liquid`; the half/quadrant layouts are for physical e-ink models, not
+  a HomeKit camera tile.
+- `settings.yml` fields that matter: `strategy` (`polling` or `static` —
+  `oauth` strategy is out of scope, same as Terminus itself doesn't support
+  it), `polling_url` / `polling_verb` / `polling_headers` / `polling_body`
+  (the data-source request; `polling_url` may itself contain Liquid, e.g.
+  `{{ vrm_token }}`-style templating against custom field values),
+  `static_data` (for `static` strategy, no request needed), `custom_fields`
+  (settings-form definitions — `keyname`/`field_type`/`name`/`description`/
+  `options`/`default`/`optional`), `refresh_interval` (minutes).
+- **`full.liquid`'s variable conventions are TRMNL-native, not
+  Terminus-internal** — confirmed directly in Shakespeare Quotes' `full.liquid`:
+  bare variables like `{{ quote }}`, `{{ book }}`, `{{ tags }}` are merged
+  straight from the polled JSON response's top-level keys (TRMNL's plugin
+  convention: whatever the data source returns becomes directly addressable in
+  the template); `{{ trmnl.plugin_settings.instance_name }}` is the
+  user-assigned camera/plugin label; `{{ trmnl.plugin_settings.custom_fields_values.KEYNAME }}`
+  reads a configured custom field's value. (Terminus itself rewrites these into
+  its own internal `source_1.*`/`extension.*` namespacing on import — Mode B
+  doesn't need that indirection since it isn't going through Terminus; render
+  directly against a Liquid context shaped like
+  `{ ...polledJson, trmnl: { plugin_settings: { instance_name, custom_fields_values } } }`.)
+- Markup uses TRMNL Design System classes (`.layout`, `.flex`, `.flex--col`,
+  `.value`, `.value--large`, `.label`, `.title_bar`, `.title`, `.image`, plus
+  `data-value-fit`/`data-value-fit-max-height` attributes for JS-driven
+  autosizing text) — these only render correctly with `plugins.css`/
+  `plugins.js` loaded, and the autosize JS needs a moment to settle before the
+  screenshot is taken (not just "load and shoot immediately").
+- Terminus's own render page (`app/templates/layouts/extension.html.erb`)
+  wraps content as `<body class="trmnl"><div class="screen">…parsed
+  full.liquid…</div></body>`, with a `.screen { … }` inline style block holding
+  device-specific CSS custom properties (width/height/etc., normally sourced
+  from Terminus's own device-model config). Mode B has no device model system,
+  so it should set its own fixed `--screen-width`/`--screen-height` (matching
+  whatever resolution the camera advertises) rather than depending on
+  Terminus's model data.
 
 ### Shared contract
 
@@ -58,11 +113,20 @@ and `platform.ts` don't need to know which mode is active. Only
   that date has passed and the endpoint hasn't moved, but re-check before
   building against it since it's explicitly unstable.
 - **Is TRMNL's framework CSS/JS meant to be loaded by third-party software?**
-  Non-issue — `usetrmnl/trmnl-component` (the actual framework, MIT licensed)
-  explicitly documents local self-hosting as a supported install path
-  (`<script src="trmnl-component.js">`), not just its CDN URL. Mode B should
-  vendor/bundle the file locally rather than hotlink `trmnl.com`'s CDN on every
-  render — sidesteps the ToS/fair-use question entirely instead of resolving it.
+  Correction to an earlier version of this doc: `usetrmnl/trmnl-component`
+  (MIT, self-hostable) is a *different*, unrelated embeddable device-bezel
+  widget for marketing pages — not the design system plugin markup actually
+  depends on. The real dependency is `https://trmnl.com/css/latest/plugins.css`
+  + `https://trmnl.com/js/latest/plugins.js`, which has no public repo or
+  self-hostable alternative; it's CDN-only. But Terminus's own extension-preview
+  layout (`app/templates/layouts/extension.html.erb` in `usetrmnl/terminus`,
+  TRMNL's own officially-blessed self-hosted reference implementation) hotlinks
+  those exact two URLs live, on every render, unconditionally. That's good
+  enough precedent: if TRMNL's own reference self-host does this, it's the
+  intended integration model, not something we'd be pushing new ToS boundaries
+  on. Mode B should do the same — hotlink at render time, matching Terminus's
+  own behavior, rather than trying to vendor an asset that isn't distributed
+  for vendoring.
 - **Ephemeral headless Chromium on the Pi** — confirmed working, empirically, on
   `vanessapi` itself. `chromium-browser` 126.0.6478.164 is already installed via
   apt (`archive.raspberrypi.org`, armhf — yes, 32-bit; this works despite the

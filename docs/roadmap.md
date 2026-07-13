@@ -1,14 +1,36 @@
 # Roadmap / backlog
 
-Ideas that have been discussed and are worth pursuing later, but are deliberately
-not being worked on now. See [architecture.md](architecture.md) for the
-current, in-progress design; this file is for things parked past that.
+Ideas and deferred work that have been discussed and are worth pursuing later,
+but are deliberately not being worked on now. See [architecture.md](architecture.md)
+for the current, actively-supported design; this file is for things parked
+past that.
 
-**Priority right now: a full end-to-end working solution first.** Mode B's
-renderer handles real Recipes correctly (see architecture.md), but nothing
-here should be started until a camera actually works end-to-end in Homebridge
-— render pipeline wired into `platform.ts`, a real camera paired and showing
-a real Recipe's output in the Home app. Everything below waits for that.
+**Priority right now**: Mode B's renderer is wired end-to-end and verified at
+the Homebridge/HAP level (a `recipeId` camera registers correctly with no
+Terminus involved — see architecture.md's "Current status"). The one
+remaining unverified step before calling the core feature fully done is
+pairing a real camera with a real Home app on an actual iOS device. Nothing
+below should be started until that's confirmed.
+
+## Mode A — bring your own Terminus (parked, 2026-07-14)
+
+Mode A's code (`src/terminusClient.ts`, `platform.ts`'s `terminusExtensionId`
+dispatch) is implemented and was validated against a real Terminus instance —
+it isn't broken, and it remains a fully valid option for anyone who already
+has a Terminus instance running and reachable somewhere. What's parked
+specifically is *this project's own* further testing/deployment of Terminus:
+`vanessapi` (the project's Pi) runs 32-bit Raspbian bullseye (`armhf`), and
+Terminus's own images (Postgres 18, Valkey 9, the app image) only publish
+`amd64`/`arm64` — no 32-bit ARM builds exist to pull. No other 64-bit host is
+available right now, and fixing this (reimaging the Pi, or sourcing a
+different host) isn't being actively pursued — it could be a while.
+
+In the meantime, Mode B is the practically supported, actually-tested path for
+this project's own setup — it needs no Docker-based dependency at all (just
+the `chromium-browser` apt package, which already works on this exact 32-bit
+install). Revisit Mode A deployment when a 64-bit host becomes available, or
+if a user with their own working Terminus instance surfaces issues that need
+`terminusClient.ts` attention.
 
 ## Mode C — authenticate against the user's own TRMNL account (proposed 2026-07-14)
 

@@ -59,15 +59,11 @@ The user runs and maintains Terminus themselves; its own web UI handles browsing
 and configuring plugins. This plugin doesn't know or care what any given
 extension displays.
 
-**Status**: implemented and validated end-to-end against a real Terminus
-instance. Deploying Terminus on `vanessapi` (the project's own Pi) for further
-testing is currently blocked — its userspace is 32-bit Raspbian bullseye
-(`armhf`), and Terminus's own images (Postgres 18, Valkey 9, the Terminus app
-image) only publish `amd64`/`arm64` manifests. No other 64-bit host is
-available right now; not being actively worked around (would need reimaging
-the Pi or a different host). This is part of why Mode B — which needs nothing
-Docker-based — became the priority instead (see "Native plugins and Terminus
-comparison" below for the full reasoning).
+Implemented and validated against a real Terminus instance — a legitimate
+option for anyone who already has Terminus running and reachable. Further work
+on deploying/testing Terminus for *this* project's own setup is parked (see
+[docs/roadmap.md](roadmap.md)); Mode B is the actively-supported, tested path
+for now (see "Native plugins and Terminus comparison" below for why).
 
 ## Mode B — self-contained, no external Terminus
 

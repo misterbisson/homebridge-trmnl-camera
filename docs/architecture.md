@@ -249,19 +249,117 @@ the mood-line text overflows past the 480px frame on longer lines — same
 *class* of layout-fit issue as `.title_bar` above, not yet root-caused;
 noted here rather than chased further this pass.
 
-**Still deliberately out of scope for now** (Paperboy-class plugins):
-multi-source (`IDX_N`) polling, XML/RSS response parsing, and TRMNL's custom
-`{% template %}`/`{% render %}` Liquid tags. Worth returning to once it's
-clear how common this shape actually is among Recipes the user cares about —
-right now it's a sample size of one.
+### Native plugins and Terminus comparison (2026-07-13)
+
+Before investing further in Mode B, checked whether Terminus (Mode A) already
+solves the harder cases for free:
+
+- Native/first-party plugins (Weather, Hacker News, PurpleAir, Lunar
+  Calendar, Alpenglow, Wiki Random Article, Days Left in Year — all seven
+  checked via `trmnl.com/integrations/*`) are a different category entirely,
+  not Recipes: `keyname`-addressed, not numeric-ID; not downloadable via the
+  archive endpoint (confirmed 404); server-side Ruby (`.rb` class + `.html.erb`
+  views) that only run on TRMNL's own infrastructure
+  (`usetrmnl/plugins`, "non-exhaustive collection... in sharing these assets
+  we intend to provide transparency," explicitly not meant to "just work" if
+  self-hosted). Some (Hacker News) are fully open and trivial to port — two
+  public, unauthenticated API calls. Others (Weather, PurpleAir, Alpenglow)
+  have **zero public source** at all in that repo.
+- Terminus's own docs (`doc/extensions.adoc`) mark "Native" support as
+  ⚪️ *Planned*, not 🟢 *Supported* — same gap, not a Mode A advantage. This
+  isn't a Mode A vs. Mode B tradeoff; nobody's self-hosted option handles
+  native plugins today.
+- Terminus's `Gemfile` depends directly on `gem "trmnl-liquid", "~> 0.6"` —
+  TRMNL's real Ruby Liquid gem — so it renders every community Recipe
+  (including Paperboy's custom tags) correctly, by construction, with none of
+  the reimplementation risk Mode B carries. That's a genuine Terminus
+  advantage for Recipes specifically, weighed against Terminus still being
+  blocked on `vanessapi` (32-bit, no arm64 images).
+
+Given native/third-party plugin support is equally unsolved either way, and
+Recipe-rendering completeness is "critical" (user's framing), the decision was
+to close Mode B's gap with Terminus on Recipes rather than revisit Mode A's
+deployment blocker — i.e. port `trmnl-liquid` itself.
+
+### `trmnl-liquid` port (2026-07-13)
+
+Found and ported `usetrmnl/trmnl-liquid` directly — not guessed, not
+Inker's (a TypeScript BYOS server, see below) JS reimplementation, the actual
+Ruby gem source (`lib/trmnl/liquid/filters.rb`, `template_tag.rb`,
+`memory_system.rb`). New module `src/trmnlLiquid.ts`,
+`createTrmnlLiquidEngine()`:
+
+- **All 16 filters** the gem defines: `append_random`, `days_ago`, `group_by`,
+  `find_by`, `markdown_to_html` (via `marked`), `number_with_delimiter`,
+  `number_to_currency`, `l_date`, `map_to_i`, `pluralize`, `json`,
+  `parse_json`, `sample`, `where_exp`, `ordinalize`, `qr_code` (via `qrcode`,
+  SVG output). `where_exp` (filter a collection by a Ruby-Liquid-condition-like
+  expression string, e.g. `where_exp: "item", "item.active == true"`) is
+  hand-parsed (tokenize, evaluate) rather than using `eval`/`new Function` —
+  Recipes are untrusted third-party content downloaded from a marketplace, so
+  executing constructed JS from their template text would be a real code-
+  execution surface. Deliberate limitation: only resolves the loop variable's
+  own (dotted) properties, not arbitrary outer-scope Liquid variables like the
+  real gem can — not needed by anything tested so far.
+- **`{% template name %}...{% endtemplate %}` + `{% render "name" %}`**
+  (Paperboy's blocker): turned out to be simple, not deep parser surgery. The
+  gem's version is one custom Liquid block tag (`TemplateTag`) that captures
+  its raw, unparsed body into an in-memory map keyed by name
+  (`MemorySystem#register`), plus Liquid's own **standard**, built-in `render`
+  tag pointed at that map instead of real files. `liquidjs` already supports
+  both custom tags and a pluggable `FS` for `render`/`include` lookups, so
+  this ported directly — see `createTemplateTag()` (modeled on liquidjs's own
+  built-in `RawTag`, which does the same "capture raw tokens until a matching
+  end tag" trick) and the `fs` object passed to `new Liquid({fs, ...})`.
+- **One engine per `renderRecipe()` call, not a shared module-level instance.**
+  The template-capture map is scoped to the engine that creates it; a shared
+  instance would let concurrent renders (different cameras render
+  independently) leak captured partials across each other, and Recipe authors
+  commonly reuse generic partial names like "main" — a real collision risk,
+  not theoretical. Cheap enough given render cadence is every several minutes
+  per camera, not a hot path.
+
+**Verified against real Recipes**: Blunt Weather still renders correctly
+(regression check, byte-identical output). Paperboy's `{% template %}`/
+`{% render %}` now genuinely executes — confirmed by rendering its raw HTML
+directly (bypassing the screenshot step): the "main" partial's CSS, `.frontpage`
+div, and `.title_bar` (icon + label) all came through correctly. Paperboy's
+screenshot still comes out blank, but for a *known, already-documented,
+separate* reason: `IDX_0`/`IDX_1` (multi-source poll data) aren't populated
+yet, so `frontimageImageLink` stays `''` — which is **truthy** in real Liquid
+(only `nil`/`false` are falsy), so the template correctly takes the
+"show image" branch with an empty `src` rather than its fallback-text branch.
+That's correct Liquid semantics given the still-missing input, not a new bug.
+
+**`usetrmnl/inker`** (a TypeScript/React/Prisma BYOS server, a different
+project from Terminus) was checked as a reference too — it has its own
+`PluginRendererService` using `liquidjs` and a comparable filter set (its
+version was useful for corroborating the port, though the real gem source was
+used as the actual reference). Two things *not* adopted from it: its `TRMNL_CSS`
+is a ~12KB hand-authored approximation of the real framework, not the actual
+vendored `plugins.css` (12.6KB vs. our hotlinked file's 13.5MB) — a fidelity
+risk, not a shortcut worth taking. Its persistent-Puppeteer-browser pattern
+also wasn't adopted (ephemeral chromium was already deliberately chosen for
+Pi resource reasons). One thing worth borrowing later: it embeds the Inter
+font as base64 `data:` URIs instead of hotlinking Google Fonts, avoiding an
+external font-CDN round-trip on every render — not done yet, noted as a cheap
+future improvement.
+
+**Still not implemented** (Paperboy's remaining gap): multi-source (`IDX_N`)
+polling with XML/RSS response parsing. Everything else that blocked it is
+resolved.
 
 ### Sequencing
 
-Mode A ships first since it's simpler and already validated end-to-end against a
-real Terminus instance (though its own next step, deploying Terminus on
-`vanessapi`, is now blocked — see below). Mode B's renderer core now works;
-next steps are the browse/select and settings-form UI pieces, plus wiring
-`localRenderer.ts` into `platform.ts` behind a config option alongside Mode A.
+Mode A ships first since it's simpler and already validated end-to-end against
+a real Terminus instance (though its own next step, deploying Terminus on
+`vanessapi`, is now blocked — see below, and the native-plugin/Terminus
+comparison above, which is why Mode B was chosen as the path forward instead
+of chasing Mode A's deployment blocker). Mode B's renderer now supports
+TRMNL's real Liquid dialect (filters + custom tags); next steps are
+multi-source polling (to fully close Paperboy), the browse/select and
+settings-form UI pieces, and wiring `localRenderer.ts` into `platform.ts`
+behind a config option alongside Mode A.
 
 ### Mode A status update (2026-07-12)
 

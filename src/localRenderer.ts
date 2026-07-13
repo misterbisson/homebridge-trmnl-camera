@@ -3,8 +3,9 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import AdmZip from 'adm-zip';
-import { Liquid } from 'liquidjs';
+import type { Liquid } from 'liquidjs';
 import { load as loadYaml } from 'js-yaml';
+import { createTrmnlLiquidEngine } from './trmnlLiquid.js';
 
 const RECIPE_ARCHIVE_URL = 'https://usetrmnl.com/api/plugin_settings/%id%/archive';
 const FRAMEWORK_CSS_URL = 'https://trmnl.com/css/latest/plugins.css';
@@ -15,17 +16,6 @@ const DEFAULT_SCREEN_HEIGHT = 480;
 const DEFAULT_CHROMIUM_PATH = 'chromium-browser';
 /** Time to let plugins.js's data-value-fit autosizing settle before the screenshot is taken. */
 const RENDER_SETTLE_MS = 4000;
-
-const liquid = new Liquid();
-
-/**
- * TRMNL's own Ruby Liquid environment registers extra filters beyond stock
- * Liquid (confirmed via usetrmnl/trmnlp's TRMNL::Liquid environment, which
- * takes a list of registered filters). `sample` (pick one random array
- * element, e.g. `{{ lines | sample }}`) is confirmed needed by the "Blunt
- * Weather" Recipe; add more here as real Recipes surface them.
- */
-liquid.registerFilter('sample', (arr: unknown) => (Array.isArray(arr) && arr.length > 0 ? arr[Math.floor(Math.random() * arr.length)] : arr));
 
 export interface CustomField {
   keyname: string;
@@ -81,9 +71,12 @@ export async function renderRecipe(options: LocalRenderOptions): Promise<{ image
     friendlyId: options.friendlyId,
     utcOffsetSeconds: options.utcOffsetSeconds,
   });
-  const polledData = await fetchPolledData(settings, fieldValues, trmnlContext);
+  // One engine per render, not shared: the {% template %} tag's captured-partials
+  // map is scoped to this engine, and different cameras can render concurrently.
+  const engine = createTrmnlLiquidEngine();
+  const polledData = await fetchPolledData(settings, fieldValues, trmnlContext, engine);
   const context = buildLiquidContext(polledData, trmnlContext);
-  const contentHtml = await renderMarkup(fullLiquid, sharedLiquid, context);
+  const contentHtml = await renderMarkup(fullLiquid, sharedLiquid, context, engine);
 
   const width = options.screenWidth ?? DEFAULT_SCREEN_WIDTH;
   const height = options.screenHeight ?? DEFAULT_SCREEN_HEIGHT;
@@ -208,6 +201,7 @@ async function fetchPolledData(
   settings: RecipeSettings,
   fieldValues: Record<string, string>,
   trmnlContext: Record<string, unknown>,
+  engine: Liquid,
 ): Promise<unknown> {
   if (settings.strategy === 'static') {
     return settings.staticData ?? {};
@@ -222,17 +216,17 @@ async function fetchPolledData(
   // Weather) -- so both need to resolve here, not just in markup.
   const pollContext = { ...fieldValues, ...trmnlContext };
 
-  const url = await renderLiquidString(settings.pollUrl, pollContext);
+  const url = await renderLiquidString(engine, settings.pollUrl, pollContext);
   const headers: Record<string, string> = {};
   if (settings.pollHeaders) {
     for (const [key, value] of Object.entries(settings.pollHeaders)) {
-      headers[key] = await renderLiquidString(value, pollContext);
+      headers[key] = await renderLiquidString(engine, value, pollContext);
     }
   }
 
   const isBodylessVerb = settings.pollVerb === 'GET' || settings.pollVerb === 'HEAD';
   const body = !isBodylessVerb && settings.pollBody
-    ? JSON.stringify(await renderLiquidDeep(settings.pollBody, pollContext))
+    ? JSON.stringify(await renderLiquidDeep(engine, settings.pollBody, pollContext))
     : undefined;
   if (body !== undefined) {
     headers['content-type'] ??= 'application/json';
@@ -262,9 +256,14 @@ function buildLiquidContext(polledData: unknown, trmnlContext: Record<string, un
  * variable scope. Matches Terminus's own extractor.rb, which joins the raw source
  * before rendering rather than rendering each file separately.
  */
-export async function renderMarkup(fullLiquid: string, sharedLiquid: string | undefined, context: Record<string, unknown>): Promise<string> {
+export async function renderMarkup(
+  fullLiquid: string,
+  sharedLiquid: string | undefined,
+  context: Record<string, unknown>,
+  engine: Liquid = createTrmnlLiquidEngine(),
+): Promise<string> {
   const source = [sharedLiquid, fullLiquid].filter((part): part is string => !!part).join('\n\n');
-  return liquid.parseAndRender(source, context);
+  return engine.parseAndRender(source, context);
 }
 
 /**
@@ -342,20 +341,20 @@ function runChromiumScreenshot(
   });
 }
 
-async function renderLiquidString(template: string, context: Record<string, unknown>): Promise<string> {
-  return liquid.parseAndRender(template, context);
+async function renderLiquidString(engine: Liquid, template: string, context: Record<string, unknown>): Promise<string> {
+  return engine.parseAndRender(template, context);
 }
 
-async function renderLiquidDeep(value: unknown, context: Record<string, unknown>): Promise<unknown> {
+async function renderLiquidDeep(engine: Liquid, value: unknown, context: Record<string, unknown>): Promise<unknown> {
   if (typeof value === 'string') {
-    return renderLiquidString(value, context);
+    return renderLiquidString(engine, value, context);
   }
   if (Array.isArray(value)) {
-    return Promise.all(value.map((item) => renderLiquidDeep(item, context)));
+    return Promise.all(value.map((item) => renderLiquidDeep(engine, item, context)));
   }
   if (value && typeof value === 'object') {
     const entries = await Promise.all(
-      Object.entries(value).map(async ([key, val]) => [key, await renderLiquidDeep(val, context)] as const),
+      Object.entries(value).map(async ([key, val]) => [key, await renderLiquidDeep(engine, val, context)] as const),
     );
     return Object.fromEntries(entries);
   }

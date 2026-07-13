@@ -3,6 +3,53 @@
 This plugin is meant to support two ways of getting a rendered image for a given
 TRMNL plugin. Only the first is built today.
 
+## Scope (settled 2026-07-13)
+
+This plugin's rendering scope is bounded by what
+[Terminus](https://github.com/usetrmnl/terminus) itself supports — not the
+full TRMNL platform. Straight from Terminus's own roadmap table
+([`doc/extensions.adoc`](https://github.com/usetrmnl/terminus/blob/main/doc/extensions.adoc)):
+
+| Feature | Terminus status |
+| --- | --- |
+| Private extensions | 🟢 Supported |
+| Public extensions | 🟢 Supported |
+| Recipes | 🟢 Supported |
+| Import (Core) | 🟢 Supported |
+| Import/Export (Terminus) | 🟢 Supported |
+| **Native** | **⚪️ Planned** |
+| **Third Party** | **⚪️ Planned** |
+
+**In scope, both modes**: community Recipes — Liquid template + `settings.yml`
++ a polling or static data source, browsable via
+[`trmnl.com/recipes.json`](https://trmnl.com/recipes.json) and downloadable
+via `usetrmnl.com/api/plugin_settings/:id/archive`. This is what Shakespeare
+Quotes, Paperboy, and Blunt Weather (see below) all are, and what the
+`trmnl-liquid` port exists to render correctly.
+
+**Out of scope for now**: native/first-party TRMNL plugins (Weather, Hacker
+News, PurpleAir, Lunar Calendar, Alpenglow, Wiki Random Article, Days Left in
+Year, and others listed at
+[`trmnl.com/integrations`](https://trmnl.com/integrations)) and third-party
+marketplace plugins. Not because they were ruled out on their merits — because
+**Terminus itself doesn't support them either** (marked ⚪️ *Planned* in its
+own roadmap, not 🟢 *Supported*). There's no existing self-hosted renderer to
+match for that category; supporting it would mean writing bespoke per-plugin
+integrations (each native plugin is a server-side Ruby class + data-fetching
+logic + ERB view, not a downloadable Liquid archive — see
+[`usetrmnl/plugins`](https://github.com/usetrmnl/plugins), and most have no
+public source at all), not extending a generic renderer. If this becomes a
+real ask later, treat it as new scope, not a Mode A/B gap to close.
+
+**Why this framing matters**: it keeps "is Mode B good enough" well-defined.
+Mode B is measured against Terminus's Recipe-rendering completeness — which is
+why the [`trmnl-liquid`](https://github.com/usetrmnl/trmnl-liquid) port exists,
+since Terminus's own `Gemfile` depends on that gem directly
+(`gem "trmnl-liquid", "~> 0.6"`) and Mode B needs the same fidelity, not
+Terminus's full feature set (Postgres, accounts, playlists, native plugins —
+deliberately not being replicated either; see "Mode B — self-contained" below
+for why running full Terminus was ruled out in the first place).
+
 ## Mode A — bring your own Terminus (current)
 
 Config is `terminusBaseUrl` + credentials (see [README](../README.md#configuration)).

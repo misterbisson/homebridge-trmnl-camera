@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseSettings } from '../src/localRenderer.js';
+import { parseSettings, renderMarkup } from '../src/localRenderer.js';
 
 // A real settings.yml pulled from a live TRMNL Recipe (id 369398, "Shakespeare
 // Quotes") via usetrmnl.com/api/plugin_settings/:id/archive -- see
@@ -84,5 +84,35 @@ refresh_interval: 15
       { keyname: 'api_token', name: 'API Token', fieldType: 'string', description: undefined, options: undefined, default: undefined, optional: false },
       { keyname: 'event_id', name: 'Event ID', fieldType: 'string', description: undefined, options: undefined, default: '66', optional: false },
     ]);
+  });
+});
+
+describe('renderMarkup', () => {
+  // Real bug (found via the live "Blunt Weather" Recipe, id 305453): shared.liquid
+  // and full.liquid were rendered as two separate Liquid passes, so {% assign %}
+  // variables set in shared.liquid never reached full.liquid. Terminus's own
+  // extractor.rb joins the raw source before rendering, not the rendered output.
+  it('shares assigned variables between shared.liquid and full.liquid', async () => {
+    const shared = '{% assign greeting = "hello" %}';
+    const full = '<span>{{ greeting }}</span>';
+
+    const html = await renderMarkup(full, shared, {});
+
+    expect(html.trim()).toBe('<span>hello</span>');
+  });
+
+  it('renders full.liquid alone when there is no shared.liquid', async () => {
+    const html = await renderMarkup('<span>{{ name }}</span>', undefined, { name: 'Shakespeare Quotes' });
+
+    expect(html).toBe('<span>Shakespeare Quotes</span>');
+  });
+
+  // TRMNL's own Ruby Liquid environment registers extra filters beyond stock
+  // Liquid; `sample` (confirmed needed by "Blunt Weather") isn't one liquidjs
+  // ships by default, so localRenderer registers it itself.
+  it('supports the sample filter for picking a random array element', async () => {
+    const html = await renderMarkup('{{ items | sample }}', undefined, { items: ['only-option'] });
+
+    expect(html).toBe('only-option');
   });
 });

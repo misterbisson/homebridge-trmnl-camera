@@ -18,6 +18,15 @@ const RENDER_SETTLE_MS = 4000;
 
 const liquid = new Liquid();
 
+/**
+ * TRMNL's own Ruby Liquid environment registers extra filters beyond stock
+ * Liquid (confirmed via usetrmnl/trmnlp's TRMNL::Liquid environment, which
+ * takes a list of registered filters). `sample` (pick one random array
+ * element, e.g. `{{ lines | sample }}`) is confirmed needed by the "Blunt
+ * Weather" Recipe; add more here as real Recipes surface them.
+ */
+liquid.registerFilter('sample', (arr: unknown) => (Array.isArray(arr) && arr.length > 0 ? arr[Math.floor(Math.random() * arr.length)] : arr));
+
 export interface CustomField {
   keyname: string;
   name?: string;
@@ -48,6 +57,10 @@ export interface LocalRenderOptions {
   label: string;
   /** Values for the recipe's custom_fields, keyed by keyname. Missing keys fall back to the field's own default. */
   fieldValues?: Record<string, string>;
+  /** Stable ID exposed as trmnl.device.friendly_id. Defaults to a slug of `label` -- we have no real device, so any stable string is fine. */
+  friendlyId?: string;
+  /** Exposed as trmnl.user.utc_offset (seconds east of UTC). Defaults to 0 (UTC). */
+  utcOffsetSeconds?: number;
   screenWidth?: number;
   screenHeight?: number;
   /** Path to a chromium/chromium-browser binary supporting --headless=new --screenshot. */
@@ -64,8 +77,12 @@ export async function renderRecipe(options: LocalRenderOptions): Promise<{ image
   const { settingsYaml, fullLiquid, sharedLiquid } = await fetchRecipeArchive(options.recipeId);
   const settings = parseSettings(settingsYaml);
   const fieldValues = mergeFieldDefaults(settings.customFields, options.fieldValues ?? {});
-  const polledData = await fetchPolledData(settings, fieldValues);
-  const context = buildLiquidContext(polledData, fieldValues, options.label);
+  const trmnlContext = buildTrmnlContext(options.label, fieldValues, {
+    friendlyId: options.friendlyId,
+    utcOffsetSeconds: options.utcOffsetSeconds,
+  });
+  const polledData = await fetchPolledData(settings, fieldValues, trmnlContext);
+  const context = buildLiquidContext(polledData, trmnlContext);
   const contentHtml = await renderMarkup(fullLiquid, sharedLiquid, context);
 
   const width = options.screenWidth ?? DEFAULT_SCREEN_WIDTH;
@@ -144,7 +161,54 @@ function mergeFieldDefaults(fields: CustomField[], provided: Record<string, stri
   return result;
 }
 
-async function fetchPolledData(settings: RecipeSettings, fieldValues: Record<string, string>): Promise<unknown> {
+interface DeviceContextOptions {
+  friendlyId?: string;
+  utcOffsetSeconds?: number;
+}
+
+/**
+ * Builds the trmnl.* namespace shared by both the poll-templating step and
+ * markup rendering. device.percent_charged and (implicitly) signal strength
+ * follow usetrmnl/trmnl-display's own convention for non-e-ink Linux clients:
+ * it hardcodes battery-voltage 100.00 and rssi 0 rather than reading real
+ * hardware, since there's no battery to read. friendly_id/utc_offset have no
+ * real device either, so default to a stable slug of the label and UTC.
+ */
+function buildTrmnlContext(
+  label: string,
+  fieldValues: Record<string, string>,
+  device: DeviceContextOptions,
+): Record<string, unknown> {
+  return {
+    trmnl: {
+      plugin_settings: {
+        instance_name: label,
+        custom_fields_values: fieldValues,
+      },
+      device: {
+        friendly_id: device.friendlyId ?? slugify(label),
+        percent_charged: 100,
+      },
+      system: {
+        timestamp_utc: Math.floor(Date.now() / 1000),
+      },
+      user: {
+        utc_offset: device.utcOffsetSeconds ?? 0,
+      },
+    },
+  };
+}
+
+function slugify(label: string): string {
+  const slug = label.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return slug.length > 0 ? slug.slice(0, 12) : 'HBTC';
+}
+
+async function fetchPolledData(
+  settings: RecipeSettings,
+  fieldValues: Record<string, string>,
+  trmnlContext: Record<string, unknown>,
+): Promise<unknown> {
   if (settings.strategy === 'static') {
     return settings.staticData ?? {};
   }
@@ -152,17 +216,23 @@ async function fetchPolledData(settings: RecipeSettings, fieldValues: Record<str
     throw new Error(`Recipe ${settings.id} (${settings.name}) has no polling_url configured.`);
   }
 
-  const url = await renderLiquidString(settings.pollUrl, fieldValues);
+  // Recipe authors reference custom field values both ways in the wild --
+  // bare `{{ latitude }}` (Shakespeare Quotes, Paperboy) and fully-qualified
+  // `{{ trmnl.plugin_settings.custom_fields_values.latitude }}` (Blunt
+  // Weather) -- so both need to resolve here, not just in markup.
+  const pollContext = { ...fieldValues, ...trmnlContext };
+
+  const url = await renderLiquidString(settings.pollUrl, pollContext);
   const headers: Record<string, string> = {};
   if (settings.pollHeaders) {
     for (const [key, value] of Object.entries(settings.pollHeaders)) {
-      headers[key] = await renderLiquidString(value, fieldValues);
+      headers[key] = await renderLiquidString(value, pollContext);
     }
   }
 
   const isBodylessVerb = settings.pollVerb === 'GET' || settings.pollVerb === 'HEAD';
   const body = !isBodylessVerb && settings.pollBody
-    ? JSON.stringify(await renderLiquidDeep(settings.pollBody, fieldValues))
+    ? JSON.stringify(await renderLiquidDeep(settings.pollBody, pollContext))
     : undefined;
   if (body !== undefined) {
     headers['content-type'] ??= 'application/json';
@@ -177,26 +247,24 @@ async function fetchPolledData(settings: RecipeSettings, fieldValues: Record<str
   return contentType.includes('json') ? res.json() : { raw: await res.text() };
 }
 
-function buildLiquidContext(polledData: unknown, fieldValues: Record<string, string>, label: string): Record<string, unknown> {
+function buildLiquidContext(polledData: unknown, trmnlContext: Record<string, unknown>): Record<string, unknown> {
   const base = polledData && typeof polledData === 'object' && !Array.isArray(polledData)
     ? (polledData as Record<string, unknown>)
     : { data: polledData };
 
-  return {
-    ...base,
-    trmnl: {
-      plugin_settings: {
-        instance_name: label,
-        custom_fields_values: fieldValues,
-      },
-    },
-  };
+  return { ...base, ...trmnlContext };
 }
 
-async function renderMarkup(fullLiquid: string, sharedLiquid: string | undefined, context: Record<string, unknown>): Promise<string> {
-  const shared = sharedLiquid ? await liquid.parseAndRender(sharedLiquid, context) : '';
-  const full = await liquid.parseAndRender(fullLiquid, context);
-  return [shared, full].filter(Boolean).join('\n\n');
+/**
+ * shared.liquid and full.liquid must render as ONE Liquid pass, not two: shared.liquid
+ * is typically just `{% assign %}` statements (or a `{% template %}` definition, for
+ * Recipes using TRMNL's custom tags) that full.liquid depends on being in the same
+ * variable scope. Matches Terminus's own extractor.rb, which joins the raw source
+ * before rendering rather than rendering each file separately.
+ */
+export async function renderMarkup(fullLiquid: string, sharedLiquid: string | undefined, context: Record<string, unknown>): Promise<string> {
+  const source = [sharedLiquid, fullLiquid].filter((part): part is string => !!part).join('\n\n');
+  return liquid.parseAndRender(source, context);
 }
 
 /**

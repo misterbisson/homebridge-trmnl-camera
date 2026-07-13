@@ -184,10 +184,76 @@ Recipe's `settings.yml` pins `framework_version: 3.1.1`, but we always hotlink
 whether the framework CDN serves versioned URLs (`.../3.1.1/plugins.css`) we
 could pin to instead of `latest`, before spending more time on this.
 
-Not yet exercised: every custom field in this test Recipe was `author_bio`
-(filtered out, not a real setting) — a Recipe with a real required custom
-field (e.g. VRM Dashboard's `vrm_token`) hasn't been run through the field
-→ `polling_url`/`polling_headers` Liquid-templating path yet.
+### Real-plugin survey: Paperboy and Blunt Weather (2026-07-13)
+
+Scope note: running Terminus to support *other physical TRMNL devices* stays
+out of scope (per [[feedback-scope-terminus-is-overkill]]), but rendering
+*typical Recipes correctly* is squarely in scope — that's the actual point of
+Mode B. Pulled two more real Recipe archives to check what "typical" requires
+beyond Shakespeare Quotes' easy case.
+
+**Paperboy** (id 152705, hundreds of newspaper front pages) turned out to be
+the complex outlier, not the typical case: its `full.liquid` is just
+`{% render "main", data: data, trmnl: trmnl, IDX_0: IDX_0, IDX_1: IDX_1 %}`,
+with real markup living in `shared.liquid` inside `{% template main %}…
+{% endtemplate %}` — custom Liquid tags `liquidjs` doesn't have. Its
+`polling_url` is *two* newline-separated URLs (one RSS feed, one a
+device-battery-telemetry beacon we have no reason to call), referenced in
+markup as `IDX_0`/`IDX_1` — i.e. TRMNL supports multiple poll sources per
+plugin, with XML/RSS response parsing, not just single-JSON. Its `newspaper`
+custom field is `multiple: true` (array-valued, not a plain string). None of
+this is implemented; still an open gap, deliberately deferred (see below).
+
+**Blunt Weather** (id 305453, Open-Meteo-backed sarcastic weather commentary)
+was the more representative "typical plugin" case — clean single-JSON poll,
+no multi-source/XML/custom-tag complexity — and exercising it end-to-end
+found two real, now-fixed bugs plus confirmed one design decision:
+
+1. **Bug: `shared.liquid` and `full.liquid` were rendered as two separate
+   Liquid passes.** `{% assign %}` variables set in `shared.liquid` (which is
+   *all* Blunt Weather's `shared.liquid` is — no custom tags, just plain
+   assigns) never reached `full.liquid`'s render context, so every derived
+   value (`mood_line`, `weather_category`, `sunrise_fmt`, …) came out empty.
+   Terminus's own `extractor.rb` joins the raw *source* before rendering, not
+   the rendered *output* — `renderMarkup()` now does the same (concatenate,
+   then one `parseAndRender` call). This was silent and easy to miss because
+   each half rendered "successfully" on its own, just with entirely blank
+   assigned values.
+2. **Bug: custom field values weren't available during poll-templating.**
+   Blunt Weather's `polling_url` references
+   `{{ trmnl.plugin_settings.custom_fields_values.latitude }}` (the
+   fully-qualified path), while Shakespeare Quotes and Paperboy both used the
+   bare `{{ fieldname }}` shorthand — both conventions are apparently normal
+   among Recipe authors. `fetchPolledData()` now templates against
+   `{ ...fieldValues, ...trmnlContext }`, so both resolve.
+3. **Design decision: `trmnl.device.*`/`trmnl.system.*`/`trmnl.user.*` need
+   stub values**, grounded in `usetrmnl/trmnl-display` (TRMNL's official
+   Linux/Raspberry Pi client) rather than guessed — that client has no real
+   battery, so it just hardcodes `battery-voltage: 100.00` and `rssi: 0` in
+   every request rather than reading real hardware. `buildTrmnlContext()`
+   follows the same precedent: `device.percent_charged = 100`,
+   `device.friendly_id` = a slug of the camera label (no real device, any
+   stable string works), `system.timestamp_utc` = real current time,
+   `user.utc_offset` = 0 (UTC) unless overridden via `LocalRenderOptions`.
+
+Also added: a `sample` Liquid filter (`{{ lines | sample }}`, pick one random
+array element) — confirmed needed by Blunt Weather, not present in stock
+`liquidjs`. TRMNL's own Ruby Liquid environment explicitly supports
+registering extra filters (per `trmnlp`'s `renderer.rb`), so this is expected,
+not a red flag; more may surface as more Recipes get exercised.
+
+Verified end-to-end against real coordinates: correct icon, correct
+temperature (`"It's now 60°F, but it feels like 61°F"`), correct sunrise/
+sunset, correct sarcastic mood line selection. New visual issue surfaced:
+the mood-line text overflows past the 480px frame on longer lines — same
+*class* of layout-fit issue as `.title_bar` above, not yet root-caused;
+noted here rather than chased further this pass.
+
+**Still deliberately out of scope for now** (Paperboy-class plugins):
+multi-source (`IDX_N`) polling, XML/RSS response parsing, and TRMNL's custom
+`{% template %}`/`{% render %}` Liquid tags. Worth returning to once it's
+clear how common this shape actually is among Recipes the user cares about —
+right now it's a sample size of one.
 
 ### Sequencing
 

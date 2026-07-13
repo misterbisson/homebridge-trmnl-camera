@@ -9,26 +9,41 @@ import { Categories } from 'homebridge';
 import ffmpegPath from 'ffmpeg-for-homebridge';
 import { PLATFORM_NAME, PLUGIN_NAME } from './settings.js';
 import { TerminusClient } from './terminusClient.js';
-import { RenderCache } from './renderCache.js';
+import { renderRecipe } from './localRenderer.js';
+import { RenderCache, type RenderFn } from './renderCache.js';
 import { buildStreamingOptions, TrmnlCameraStreamingDelegate } from './camera.js';
 import { convertToJpeg } from './imageConvert.js';
 
+interface FieldValuePair {
+  key: string;
+  value: string;
+}
+
 interface CameraConfig {
   label: string;
-  terminusExtensionId: number;
   pollIntervalSeconds?: number;
   streamFps?: number;
+  screenWidth?: number;
+  screenHeight?: number;
+  /** Mode A: renders via a self-hosted Terminus instance. Set this or recipeId, not both. */
+  terminusExtensionId?: number;
+  /** Mode B: renders locally from a TRMNL Recipe archive. Set this or terminusExtensionId, not both. */
+  recipeId?: number;
+  fieldValues?: FieldValuePair[];
 }
 
 interface TrmnlCameraPlatformConfig extends PlatformConfig {
   terminusBaseUrl?: string;
   terminusEmail?: string;
   terminusPassword?: string;
+  /** Mode B: path to a chromium/chromium-browser binary supporting --headless=new --screenshot. */
+  chromiumPath?: string;
   cameras?: CameraConfig[];
 }
 
 const DEFAULT_POLL_INTERVAL_SECONDS = 900;
 const DEFAULT_STREAM_FPS = 1;
+const DEFAULT_CHROMIUM_PATH = 'chromium-browser';
 
 export class TrmnlCameraPlatform implements DynamicPlatformPlugin {
   private readonly accessories: PlatformAccessory[] = [];
@@ -53,28 +68,30 @@ export class TrmnlCameraPlatform implements DynamicPlatformPlugin {
       return;
     }
 
-    const { terminusBaseUrl, terminusEmail, terminusPassword, cameras } = this.config;
-    if (!terminusBaseUrl || !terminusEmail || !terminusPassword) {
-      this.log.error('terminusBaseUrl, terminusEmail, and terminusPassword must be configured.');
-      return;
-    }
+    const { terminusBaseUrl, terminusEmail, terminusPassword, chromiumPath, cameras } = this.config;
     if (!cameras || cameras.length === 0) {
       this.log.warn('No cameras configured.');
       return;
     }
 
-    const terminusClient = new TerminusClient({
-      baseUrl: terminusBaseUrl,
-      email: terminusEmail,
-      password: terminusPassword,
-      log: this.log,
-    });
+    const terminusClient = this.buildTerminusClientIfNeeded(cameras, terminusBaseUrl, terminusEmail, terminusPassword);
+    if (terminusClient === 'missing-config') {
+      return;
+    }
 
     const seenUuids = new Set<string>();
     for (const cameraConfig of cameras) {
-      const uuid = this.api.hap.uuid.generate(`${PLUGIN_NAME}:${cameraConfig.terminusExtensionId}`);
+      const id = this.identifyCamera(cameraConfig);
+      if (!id) {
+        this.log.error(
+          `Camera "${cameraConfig.label}" must set exactly one of terminusExtensionId or recipeId; skipping.`,
+        );
+        continue;
+      }
+
+      const uuid = this.api.hap.uuid.generate(`${PLUGIN_NAME}:${id.mode}:${id.value}`);
       seenUuids.add(uuid);
-      this.configureCamera(uuid, cameraConfig, terminusClient, ffmpegPath);
+      this.configureCamera(uuid, cameraConfig, terminusClient, chromiumPath ?? DEFAULT_CHROMIUM_PATH, ffmpegPath);
     }
 
     const staleAccessories = this.accessories.filter((accessory) => !seenUuids.has(accessory.UUID));
@@ -83,10 +100,42 @@ export class TrmnlCameraPlatform implements DynamicPlatformPlugin {
     }
   }
 
+  /** Only Mode A (terminusExtensionId) cameras need a TerminusClient; Mode B (recipeId) needs no Terminus at all. */
+  private buildTerminusClientIfNeeded(
+    cameras: CameraConfig[],
+    baseUrl?: string,
+    email?: string,
+    password?: string,
+  ): TerminusClient | undefined | 'missing-config' {
+    const needsTerminus = cameras.some((camera) => camera.terminusExtensionId !== undefined);
+    if (!needsTerminus) {
+      return undefined;
+    }
+    if (!baseUrl || !email || !password) {
+      this.log.error(
+        'terminusBaseUrl, terminusEmail, and terminusPassword must be configured for cameras using terminusExtensionId.',
+      );
+      return 'missing-config';
+    }
+    return new TerminusClient({ baseUrl, email, password, log: this.log });
+  }
+
+  private identifyCamera(cameraConfig: CameraConfig): { mode: 'terminus' | 'recipe'; value: number } | undefined {
+    const hasTerminus = cameraConfig.terminusExtensionId !== undefined;
+    const hasRecipe = cameraConfig.recipeId !== undefined;
+    if (hasTerminus === hasRecipe) {
+      return undefined; // neither or both set
+    }
+    return hasTerminus
+      ? { mode: 'terminus', value: cameraConfig.terminusExtensionId! }
+      : { mode: 'recipe', value: cameraConfig.recipeId! };
+  }
+
   private configureCamera(
     uuid: string,
     cameraConfig: CameraConfig,
-    terminusClient: TerminusClient,
+    terminusClient: TerminusClient | undefined,
+    chromiumPath: string,
     ffmpegBinaryPath: string,
   ): void {
     const existing = this.accessories.find((accessory) => accessory.UUID === uuid);
@@ -96,11 +145,8 @@ export class TrmnlCameraPlatform implements DynamicPlatformPlugin {
     const pollIntervalSeconds = cameraConfig.pollIntervalSeconds ?? DEFAULT_POLL_INTERVAL_SECONDS;
     const streamFps = cameraConfig.streamFps ?? DEFAULT_STREAM_FPS;
 
-    const renderCache = new RenderCache(pollIntervalSeconds * 1000, async () => {
-      const { imageBuffer, contentType } = await terminusClient.render(cameraConfig.terminusExtensionId);
-      const jpeg = contentType.includes('jpeg') ? imageBuffer : await convertToJpeg(ffmpegBinaryPath, imageBuffer);
-      return { imageBuffer: jpeg, contentType: 'image/jpeg' };
-    });
+    const renderFn = this.buildRenderFn(cameraConfig, terminusClient, chromiumPath, ffmpegBinaryPath);
+    const renderCache = new RenderCache(pollIntervalSeconds * 1000, renderFn);
 
     const streamingDelegate = new TrmnlCameraStreamingDelegate(
       cameraConfig.label,
@@ -122,5 +168,34 @@ export class TrmnlCameraPlatform implements DynamicPlatformPlugin {
       this.accessories.push(accessory);
       this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
     }
+  }
+
+  private buildRenderFn(
+    cameraConfig: CameraConfig,
+    terminusClient: TerminusClient | undefined,
+    chromiumPath: string,
+    ffmpegBinaryPath: string,
+  ): RenderFn {
+    if (cameraConfig.recipeId !== undefined) {
+      const fieldValues = Object.fromEntries((cameraConfig.fieldValues ?? []).map(({ key, value }) => [key, value]));
+      return async () => {
+        const { imageBuffer, contentType } = await renderRecipe({
+          recipeId: cameraConfig.recipeId!,
+          label: cameraConfig.label,
+          fieldValues,
+          screenWidth: cameraConfig.screenWidth,
+          screenHeight: cameraConfig.screenHeight,
+          chromiumPath,
+        });
+        const jpeg = contentType.includes('jpeg') ? imageBuffer : await convertToJpeg(ffmpegBinaryPath, imageBuffer);
+        return { imageBuffer: jpeg, contentType: 'image/jpeg' };
+      };
+    }
+
+    return async () => {
+      const { imageBuffer, contentType } = await terminusClient!.render(cameraConfig.terminusExtensionId!);
+      const jpeg = contentType.includes('jpeg') ? imageBuffer : await convertToJpeg(ffmpegBinaryPath, imageBuffer);
+      return { imageBuffer: jpeg, contentType: 'image/jpeg' };
+    };
   }
 }

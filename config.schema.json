@@ -2,7 +2,7 @@
   "pluginAlias": "TrmnlCamera",
   "pluginType": "platform",
   "singular": true,
-  "headerDisplay": "Renders any TRMNL/Terminus extension as a HomeKit camera. Each entry below becomes one camera accessory.",
+  "headerDisplay": "Renders any TRMNL Recipe or Terminus extension as a HomeKit camera. Each entry below becomes one camera accessory.",
   "schema": {
     "type": "object",
     "properties": {
@@ -11,21 +11,24 @@
         "type": "string",
         "format": "uri",
         "default": "http://localhost:2300",
-        "required": true,
-        "description": "Base URL of the self-hosted Terminus instance (e.g. http://vanessapi.tail9a4f0.ts.net:2300)."
+        "description": "Base URL of a self-hosted Terminus instance (e.g. http://vanessapi.tail9a4f0.ts.net:2300). Only needed if any camera below sets a Terminus extension ID."
       },
       "terminusEmail": {
         "title": "Terminus account email",
         "type": "string",
-        "required": true,
-        "description": "Login email for the Terminus account used to trigger renders."
+        "description": "Login email for the Terminus account used to trigger renders. Only needed if any camera below sets a Terminus extension ID."
       },
       "terminusPassword": {
         "title": "Terminus account password",
         "type": "string",
         "format": "password",
-        "required": true,
-        "description": "Login password for the Terminus account used to trigger renders."
+        "description": "Login password for the Terminus account used to trigger renders. Only needed if any camera below sets a Terminus extension ID."
+      },
+      "chromiumPath": {
+        "title": "Chromium binary path",
+        "type": "string",
+        "default": "chromium-browser",
+        "description": "Path to a chromium/chromium-browser binary supporting --headless=new --screenshot. Only needed if any camera below sets a Recipe ID (self-contained rendering, no Terminus)."
       },
       "cameras": {
         "title": "Cameras",
@@ -42,8 +45,44 @@
             "terminusExtensionId": {
               "title": "Terminus extension ID",
               "type": "integer",
-              "required": true,
-              "description": "The numeric ID of the Terminus extension to render (visible in its URL, e.g. /extensions/12)."
+              "description": "Renders via Terminus: the numeric ID of the Terminus extension to render (visible in its URL, e.g. /extensions/12). Set this or Recipe ID, not both."
+            },
+            "recipeId": {
+              "title": "TRMNL Recipe ID",
+              "type": "integer",
+              "description": "Renders locally, no Terminus needed: the numeric ID of a TRMNL Recipe (from trmnl.com/recipes.json or a Recipe's URL). Set this or Terminus extension ID, not both."
+            },
+            "fieldValues": {
+              "title": "Recipe field values",
+              "type": "array",
+              "description": "Only used with Recipe ID. Values for the Recipe's custom fields (e.g. an API token or location), keyed by the field's name. Fields left unset here fall back to the Recipe's own default.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "title": "Field name",
+                    "type": "string",
+                    "required": true
+                  },
+                  "value": {
+                    "title": "Value",
+                    "type": "string",
+                    "required": true
+                  }
+                }
+              }
+            },
+            "screenWidth": {
+              "title": "Screen width (px)",
+              "type": "integer",
+              "default": 800,
+              "description": "Only used with Recipe ID. Rendered image width."
+            },
+            "screenHeight": {
+              "title": "Screen height (px)",
+              "type": "integer",
+              "default": 480,
+              "description": "Only used with Recipe ID. Rendered image height."
             },
             "pollIntervalSeconds": {
               "title": "Poll interval (seconds)",

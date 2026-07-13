@@ -396,6 +396,39 @@ future improvement.
 polling with XML/RSS response parsing. Everything else that blocked it is
 resolved.
 
+### Multi-source (`IDX_N`) polling (2026-07-13) — Paperboy fully closed
+
+`RecipeSettings.pollUrl` can be more than one URL, newline-separated in the
+same `settings.yml` field — confirmed via Paperboy: an RSS feed on one line, an
+unrelated device-battery-telemetry beacon on the next. `fetchPolledData()` now
+splits on newlines, Liquid-templates and fetches each URL independently (same
+shared verb/headers/body across all of them — `settings.yml` only has one
+field for each, not per-URL), and returns an array of results instead of a
+single value. `buildLiquidContext()` exposes every result as `IDX_0`/`IDX_1`/…
+(TRMNL's real, native indexing — confirmed directly in Paperboy's
+`full.liquid`) while *also* merging the first source's fields at the top
+level, so single-source Recipes (bare `{{ quote }}` access) keep working
+unchanged.
+
+Response parsing now branches on content-type: JSON as before, XML/RSS via
+`fast-xml-parser` (confirmed against Paperboy's real feed — `rss.channel.item`
+comes out as a 332-element array with `title`/`description`/`link`/`guid`/
+`pubDate`, exactly what its Liquid expects), anything else as `{ raw: text }`.
+A failed source (network error, non-2xx) degrades to `{}` rather than failing
+the whole render — the battery-beacon URL, in particular, is exactly the kind
+of secondary, non-critical source that shouldn't blank out a Recipe whose
+primary source succeeded; Recipes typically already guard missing data with
+their own `{% if %}`/fallback branches.
+
+**Verified end-to-end against the real, live Paperboy Recipe**: a genuine,
+current New York Times front page rendered correctly — live RSS fetch, XML
+parse, random-newspaper-selection Liquid logic, and the `{% template %}`/
+`{% render %}` mechanism from the previous round, all working together. This
+closes Paperboy's last documented gap. `.title_bar`'s content is still not
+visible in the screenshot (same open layout-fit issue noted earlier in this
+doc, unrelated to polling) — the newspaper image itself, which is the actual
+point of the plugin, is correct.
+
 ### Sequencing
 
 Mode A ships first since it's simpler and already validated end-to-end against

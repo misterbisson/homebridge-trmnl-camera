@@ -5,7 +5,10 @@ import path from 'node:path';
 import AdmZip from 'adm-zip';
 import type { Liquid } from 'liquidjs';
 import { load as loadYaml } from 'js-yaml';
+import { XMLParser } from 'fast-xml-parser';
 import { createTrmnlLiquidEngine } from './trmnlLiquid.js';
+
+const xmlParser = new XMLParser();
 
 const RECIPE_ARCHIVE_URL = 'https://usetrmnl.com/api/plugin_settings/%id%/archive';
 const FRAMEWORK_CSS_URL = 'https://trmnl.com/css/latest/plugins.css';
@@ -197,14 +200,27 @@ function slugify(label: string): string {
   return slug.length > 0 ? slug.slice(0, 12) : 'HBTC';
 }
 
+const POLL_URL_SPLIT_RE = /\r\n|\n|\r/;
+
+/**
+ * TRMNL Recipes can configure more than one poll URL, newline-separated in the
+ * same `polling_url` field -- confirmed via Paperboy (id 152705), whose
+ * `polling_url` is an RSS feed on one line and an unrelated device-battery
+ * beacon on the next, referenced in markup as `IDX_0`/`IDX_1`. One shared
+ * verb/headers/body applies to every URL (settings.yml only has one field for
+ * each). Each source is fetched independently and gracefully degrades to `{}`
+ * on failure -- a flaky secondary source (like a telemetry beacon) shouldn't
+ * blank out a Recipe whose primary source succeeded; the Recipe's own Liquid
+ * typically already guards for missing data with an {% if %}/fallback branch.
+ */
 async function fetchPolledData(
   settings: RecipeSettings,
   fieldValues: Record<string, string>,
   trmnlContext: Record<string, unknown>,
   engine: Liquid,
-): Promise<unknown> {
+): Promise<unknown[]> {
   if (settings.strategy === 'static') {
-    return settings.staticData ?? {};
+    return [settings.staticData ?? {}];
   }
   if (!settings.pollUrl) {
     throw new Error(`Recipe ${settings.id} (${settings.name}) has no polling_url configured.`);
@@ -215,38 +231,75 @@ async function fetchPolledData(
   // `{{ trmnl.plugin_settings.custom_fields_values.latitude }}` (Blunt
   // Weather) -- so both need to resolve here, not just in markup.
   const pollContext = { ...fieldValues, ...trmnlContext };
+  const urlTemplates = settings.pollUrl.split(POLL_URL_SPLIT_RE).map((line) => line.trim()).filter(Boolean);
 
-  const url = await renderLiquidString(engine, settings.pollUrl, pollContext);
-  const headers: Record<string, string> = {};
-  if (settings.pollHeaders) {
-    for (const [key, value] of Object.entries(settings.pollHeaders)) {
-      headers[key] = await renderLiquidString(engine, value, pollContext);
-    }
-  }
-
-  const isBodylessVerb = settings.pollVerb === 'GET' || settings.pollVerb === 'HEAD';
-  const body = !isBodylessVerb && settings.pollBody
-    ? JSON.stringify(await renderLiquidDeep(engine, settings.pollBody, pollContext))
-    : undefined;
-  if (body !== undefined) {
-    headers['content-type'] ??= 'application/json';
-  }
-
-  const res = await fetch(url, { method: settings.pollVerb, headers, body });
-  if (!res.ok) {
-    throw new Error(`Recipe ${settings.id} data source returned HTTP ${res.status} for ${url}`);
-  }
-
-  const contentType = res.headers.get('content-type') ?? '';
-  return contentType.includes('json') ? res.json() : { raw: await res.text() };
+  return Promise.all(urlTemplates.map((urlTemplate) => fetchOnePollSource(settings, urlTemplate, pollContext, engine)));
 }
 
-function buildLiquidContext(polledData: unknown, trmnlContext: Record<string, unknown>): Record<string, unknown> {
-  const base = polledData && typeof polledData === 'object' && !Array.isArray(polledData)
-    ? (polledData as Record<string, unknown>)
-    : { data: polledData };
+async function fetchOnePollSource(
+  settings: RecipeSettings,
+  urlTemplate: string,
+  pollContext: Record<string, unknown>,
+  engine: Liquid,
+): Promise<unknown> {
+  try {
+    const url = await renderLiquidString(engine, urlTemplate, pollContext);
+    const headers: Record<string, string> = {};
+    if (settings.pollHeaders) {
+      for (const [key, value] of Object.entries(settings.pollHeaders)) {
+        headers[key] = await renderLiquidString(engine, value, pollContext);
+      }
+    }
 
-  return { ...base, ...trmnlContext };
+    const isBodylessVerb = settings.pollVerb === 'GET' || settings.pollVerb === 'HEAD';
+    const body = !isBodylessVerb && settings.pollBody
+      ? JSON.stringify(await renderLiquidDeep(engine, settings.pollBody, pollContext))
+      : undefined;
+    if (body !== undefined) {
+      headers['content-type'] ??= 'application/json';
+    }
+
+    const res = await fetch(url, { method: settings.pollVerb, headers, body });
+    if (!res.ok) {
+      return {};
+    }
+    return parsePollResponse(res);
+  } catch {
+    return {};
+  }
+}
+
+async function parsePollResponse(res: Response): Promise<unknown> {
+  const contentType = res.headers.get('content-type') ?? '';
+  if (contentType.includes('json')) {
+    return res.json();
+  }
+  if (contentType.includes('xml') || contentType.includes('rss')) {
+    return xmlParser.parse(await res.text());
+  }
+  return { raw: await res.text() };
+}
+
+/**
+ * Builds the Liquid render context from every poll source. The first source's
+ * fields are merged at the top level (bare `{{ quote }}` access -- how the
+ * single-source Recipes tested so far, e.g. Shakespeare Quotes/Blunt Weather,
+ * all work) *and* every source is exposed as `IDX_0`/`IDX_1`/... (TRMNL's own
+ * native indexing convention -- confirmed directly in Paperboy's full.liquid),
+ * so both single- and multi-source Recipes resolve correctly.
+ */
+export function buildLiquidContext(sources: unknown[], trmnlContext: Record<string, unknown>): Record<string, unknown> {
+  const primary = sources[0];
+  const base = primary && typeof primary === 'object' && !Array.isArray(primary)
+    ? (primary as Record<string, unknown>)
+    : { data: primary };
+
+  const indexed: Record<string, unknown> = {};
+  sources.forEach((source, index) => {
+    indexed[`IDX_${index}`] = source;
+  });
+
+  return { ...base, ...indexed, ...trmnlContext };
 }
 
 /**

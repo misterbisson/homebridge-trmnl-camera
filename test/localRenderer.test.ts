@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseSettings, renderMarkup } from '../src/localRenderer.js';
+import { buildLiquidContext, parseSettings, renderMarkup } from '../src/localRenderer.js';
 
 // A real settings.yml pulled from a live TRMNL Recipe (id 369398, "Shakespeare
 // Quotes") via usetrmnl.com/api/plugin_settings/:id/archive -- see
@@ -114,5 +114,34 @@ describe('renderMarkup', () => {
     const html = await renderMarkup('{{ items | sample }}', undefined, { items: ['only-option'] });
 
     expect(html).toBe('only-option');
+  });
+});
+
+describe('buildLiquidContext', () => {
+  // Single-source Recipes (Shakespeare Quotes, Blunt Weather) rely on bare
+  // top-level field access, e.g. {{ quote }} -- not {{ IDX_0.quote }}.
+  it('merges the first source at the top level for single-source Recipes', () => {
+    const context = buildLiquidContext([{ quote: 'to be or not to be' }], {});
+
+    expect(context.quote).toBe('to be or not to be');
+    expect(context.IDX_0).toEqual({ quote: 'to be or not to be' });
+  });
+
+  // Paperboy (id 152705) is multi-source: an RSS feed and an unrelated
+  // device-telemetry beacon, referenced in markup as IDX_0/IDX_1.
+  it('exposes every poll source as IDX_N for multi-source Recipes', () => {
+    const context = buildLiquidContext([{ rss: 'feed-data' }, { ok: true }], {});
+
+    expect(context.IDX_0).toEqual({ rss: 'feed-data' });
+    expect(context.IDX_1).toEqual({ ok: true });
+    // The primary source's fields are still merged at the top level too.
+    expect(context.rss).toBe('feed-data');
+  });
+
+  it('merges the trmnl.* context alongside poll sources', () => {
+    const context = buildLiquidContext([{ a: 1 }], { trmnl: { plugin_settings: { instance_name: 'Test' } } });
+
+    expect(context.a).toBe(1);
+    expect((context.trmnl as { plugin_settings: { instance_name: string } }).plugin_settings.instance_name).toBe('Test');
   });
 });

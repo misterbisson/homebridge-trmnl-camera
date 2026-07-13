@@ -436,10 +436,13 @@ a real Terminus instance (though its own next step, deploying Terminus on
 `vanessapi`, is now blocked — see below, and the native-plugin/Terminus
 comparison above, which is why Mode B was chosen as the path forward instead
 of chasing Mode A's deployment blocker). Mode B's renderer now supports
-TRMNL's real Liquid dialect (filters + custom tags); next steps are
-multi-source polling (to fully close Paperboy), the browse/select and
-settings-form UI pieces, and wiring `localRenderer.ts` into `platform.ts`
-behind a config option alongside Mode A.
+TRMNL's real Liquid dialect (filters + custom tags) and multi-source polling
+— Shakespeare Quotes, Blunt Weather, and Paperboy all render correctly end to
+end. Priority now: get one real camera working end-to-end in Homebridge
+(`localRenderer.ts` wired into `platform.ts`, paired, showing real output in
+the Home app) before starting anything new — see
+[docs/roadmap.md](roadmap.md) for ideas (like a third "authenticate against
+the user's own TRMNL account" mode) that are deliberately parked until then.
 
 ### Mode A status update (2026-07-12)
 

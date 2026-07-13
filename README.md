@@ -60,7 +60,7 @@ No code changes are ever needed to add a camera — the `cameras` array is the e
 - **Caching + request coalescing**: [`src/renderCache.ts`](src/renderCache.ts) caches each camera's rendered JPEG for `pollIntervalSeconds`. Concurrent snapshot requests during a stale-cache moment share one in-flight Terminus render instead of each triggering their own.
 - **Live view of a static image**: [`src/camera.ts`](src/camera.ts) loops the cached JPEG through `ffmpeg` into a low-fps H.264/SRTP stream — there's no enforced minimum HomeKit streaming framerate, and a static frame compresses to near-nothing via P/B-frame prediction.
 - **HomeKit Secure Video timeline is not implemented yet.** This first pass only advertises snapshot + live view.
-- **Bring-your-own Terminus is the first of two planned rendering modes.** See [docs/architecture.md](docs/architecture.md) for the self-contained (no external Terminus) mode this plugin is meant to grow into, and the open questions blocking it.
+- **Bring-your-own Terminus is the first of two planned rendering modes.** See [docs/architecture.md](docs/architecture.md) for the self-contained (no external Terminus) mode this plugin is meant to grow into, and the open questions blocking it. [docs/roadmap.md](docs/roadmap.md) has ideas parked past that.
 
 ## Development
 

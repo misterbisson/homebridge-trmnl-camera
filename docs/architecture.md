@@ -137,13 +137,44 @@ and `platform.ts` don't need to know which mode is active. Only
   afterward (`ps aux` clean within 1s of exit). No Puppeteer/Playwright needed
   (both have real arm32 gaps), no bundled binary needed.
 
+### `localRenderer.ts` status (2026-07-12)
+
+The `render(id) → {imageBuffer, contentType}` path is implemented
+(`src/localRenderer.ts`) and validated end-to-end against a real, live Recipe
+(id 369398, "Shakespeare Quotes", strategy `polling`, zero required config
+fields): downloads the archive, parses `settings.yml`, fetches live data from
+the Recipe's own `polling_url`, renders `full.liquid` with `liquidjs`, wraps it
+in a page that hotlinks `plugins.css`/`plugins.js`, and screenshots it via
+`chromium-browser --headless=new` — producing a correct, readable 800×480 PNG
+with the live-fetched quote text, book title, and author, correctly styled by
+the framework CSS. Verified via a throwaway script driving the Pi's
+`chromium-browser` over SSH (no Chromium on the dev Mac); not yet wired into a
+vitest test that spawns Chromium (network + binary dependent, doesn't belong
+in CI as-is).
+
+One real bug found and fixed in the process: the content must be wrapped in
+`<div class="view view--full">…</div>` inside `.screen` — omitting that
+wrapper (easy to miss; Terminus's own layout transform does this, but it
+wasn't obvious until tested) left `data-value-fit`-sized text invisible even
+though the framework CSS/JS had loaded fine. `RENDER_SETTLE_MS` (the
+`--virtual-time-budget` passed to Chromium) is 3000ms — confirmed sufficient
+even though `plugins.css` alone is a surprisingly large ~13.5MB download.
+
+Not yet built: the settings-form values used in this test were all defaults
+(no custom fields required for this particular Recipe) — a Recipe with real
+required custom fields (e.g. VRM Dashboard's `vrm_token`) hasn't been exercised
+yet. Also unverified: the `.title_bar` (icon/label/tags footer) rendered
+correctly in an earlier debug pass but wasn't visible in the final cropped
+screenshot — worth confirming it's actually present at the bottom of the frame
+before calling visual output "done," not just the main content area.
+
 ### Sequencing
 
 Mode A ships first since it's simpler and already validated end-to-end against a
 real Terminus instance (though its own next step, deploying Terminus on
-`vanessapi`, is now blocked — see below). Mode B's three unknowns are now
-de-risked; next step is designing `localRenderer.ts` against the shared
-`render()` contract, not further spiking.
+`vanessapi`, is now blocked — see below). Mode B's renderer core now works;
+next steps are the browse/select and settings-form UI pieces, plus wiring
+`localRenderer.ts` into `platform.ts` behind a config option alongside Mode A.
 
 ### Mode A status update (2026-07-12)
 

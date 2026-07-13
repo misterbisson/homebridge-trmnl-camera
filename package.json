@@ -19,9 +19,13 @@
     "watch": "tsc --watch"
   },
   "dependencies": {
-    "ffmpeg-for-homebridge": "^2.2.2"
+    "adm-zip": "^0.6.0",
+    "ffmpeg-for-homebridge": "^2.2.2",
+    "js-yaml": "^5.2.1",
+    "liquidjs": "^10.27.2"
   },
   "devDependencies": {
+    "@types/adm-zip": "^0.5.8",
     "@types/node": "^26.1.1",
     "homebridge": "^2.1.1",
     "typescript": "^7.0.2",

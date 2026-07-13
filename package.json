@@ -1,0 +1,30 @@
+{
+  "name": "homebridge-trmnl-camera",
+  "version": "0.1.0",
+  "description": "Homebridge plugin that renders any TRMNL/Terminus extension as a HomeKit camera",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "engines": {
+    "node": "^18.15.0 || ^20.7.0 || ^22.10.0 || ^24.0.0",
+    "homebridge": "^1.8.0 || ^2.0.0"
+  },
+  "keywords": [
+    "homebridge-plugin"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "watch": "tsc --watch"
+  },
+  "dependencies": {
+    "ffmpeg-for-homebridge": "^2.2.2"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "homebridge": "^2.1.1",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

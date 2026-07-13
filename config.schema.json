@@ -1,0 +1,68 @@
+{
+  "pluginAlias": "TrmnlCamera",
+  "pluginType": "platform",
+  "singular": true,
+  "headerDisplay": "Renders any TRMNL/Terminus extension as a HomeKit camera. Each entry below becomes one camera accessory.",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "terminusBaseUrl": {
+        "title": "Terminus base URL",
+        "type": "string",
+        "format": "uri",
+        "default": "http://localhost:2300",
+        "required": true,
+        "description": "Base URL of the self-hosted Terminus instance (e.g. http://vanessapi.tail9a4f0.ts.net:2300)."
+      },
+      "terminusEmail": {
+        "title": "Terminus account email",
+        "type": "string",
+        "required": true,
+        "description": "Login email for the Terminus account used to trigger renders."
+      },
+      "terminusPassword": {
+        "title": "Terminus account password",
+        "type": "string",
+        "format": "password",
+        "required": true,
+        "description": "Login password for the Terminus account used to trigger renders."
+      },
+      "cameras": {
+        "title": "Cameras",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "label": {
+              "title": "Name",
+              "type": "string",
+              "required": true,
+              "description": "Accessory name shown in the Home app."
+            },
+            "terminusExtensionId": {
+              "title": "Terminus extension ID",
+              "type": "integer",
+              "required": true,
+              "description": "The numeric ID of the Terminus extension to render (visible in its URL, e.g. /extensions/12)."
+            },
+            "pollIntervalSeconds": {
+              "title": "Poll interval (seconds)",
+              "type": "integer",
+              "default": 900,
+              "minimum": 30,
+              "description": "How often to trigger a fresh render and refresh the cached snapshot."
+            },
+            "streamFps": {
+              "title": "Stream framerate",
+              "type": "integer",
+              "default": 1,
+              "minimum": 1,
+              "maximum": 15,
+              "description": "Framerate advertised for live view streaming of the (static) rendered frame."
+            }
+          }
+        }
+      }
+    }
+  }
+}

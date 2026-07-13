@@ -43,30 +43,52 @@ Both modes should reduce to the same interface further down the stack —
 and `platform.ts` don't need to know which mode is active. Only
 `terminusClient.ts` (Mode A) vs. a future `localRenderer.ts` (Mode B) differ.
 
-### Open unknowns
+### Open unknowns — spiked 2026-07-12, all resolved favorably
 
-Spike these before writing any Mode B code — any one could reshape or block the
-design:
-
-- **Is there a real, documented "list/search TRMNL Recipes" API?** Terminus's
-  Gallery page must call something to populate itself; find that actual endpoint
-  rather than screen-scraping Terminus's Gallery HTML.
+- **Is there a real, documented "list/search TRMNL Recipes" API?** Yes —
+  `GET https://trmnl.com/recipes.json`, no auth. Params: `search` (name match),
+  `sort-by` (oldest/newest/popularity/fork/install), `user_id`, `per_page` (max
+  100, default 25). Response: paginated `data` array of
+  `{id, user_id, name, published_at, icon_url, icon_content_type,
+  screenshot_url, author_bio, custom_fields, stats}` plus pagination `meta`.
+  `custom_fields` is exactly the settings-form data Mode B step 2 needs.
+  Verified live (returned real recipes, e.g. "GamesDoneQuick", "Shakespeare
+  Quotes"). Docs (docs.trmnl.com/go/public-api/recipes-api) still call it
+  "alpha, may move to `/api/recipes` or `/api/plugins` before end of 2025" —
+  that date has passed and the endpoint hasn't moved, but re-check before
+  building against it since it's explicitly unstable.
 - **Is TRMNL's framework CSS/JS meant to be loaded by third-party software?**
-  Terminus's `/extensions/:id/preview` pulls it live from `trmnl.com`'s CDN.
-  Hotlinking it ourselves, across every install of this plugin, on every render,
-  is a more direct version of the TRMNL ToS/fair-use question that came up early
-  in this project's design (the original idea of having the plugin call a data
-  Worker's `polling_url` directly, at request time, was set aside partly over
-  this same concern — Terminus, TRMNL's own officially-blessed self-hosted path,
-  was chosen as an intermediary specifically to avoid it).
-- **Ephemeral headless Chromium on Pi ARM/ARM64** — is there a usable system
-  `chromium` for one-shot `--headless --screenshot` invocation (spawn,
-  screenshot, exit, no persistent process), or would Mode B need to bundle one —
-  the same arm64-Linux-Chromium problem that already ruled out Puppeteer for the
-  streaming half of this plugin?
+  Non-issue — `usetrmnl/trmnl-component` (the actual framework, MIT licensed)
+  explicitly documents local self-hosting as a supported install path
+  (`<script src="trmnl-component.js">`), not just its CDN URL. Mode B should
+  vendor/bundle the file locally rather than hotlink `trmnl.com`'s CDN on every
+  render — sidesteps the ToS/fair-use question entirely instead of resolving it.
+- **Ephemeral headless Chromium on the Pi** — confirmed working, empirically, on
+  `vanessapi` itself. `chromium-browser` 126.0.6478.164 is already installed via
+  apt (`archive.raspberrypi.org`, armhf — yes, 32-bit; this works despite the
+  Docker/Terminus 32-bit blocker because it's a native apt package, not a
+  container image). `chromium-browser --headless=new --disable-gpu --no-sandbox
+  --screenshot=out.png --window-size=800,480 file:///path/to.html` produced a
+  correct PNG from local HTML in ~5s wall-clock, with zero lingering process
+  afterward (`ps aux` clean within 1s of exit). No Puppeteer/Playwright needed
+  (both have real arm32 gaps), no bundled binary needed.
 
 ### Sequencing
 
 Mode A ships first since it's simpler and already validated end-to-end against a
-real Terminus instance. Mode B's three unknowns above should be spiked before any
-implementation starts, since any of them could invalidate the approach.
+real Terminus instance (though its own next step, deploying Terminus on
+`vanessapi`, is now blocked — see below). Mode B's three unknowns are now
+de-risked; next step is designing `localRenderer.ts` against the shared
+`render()` contract, not further spiking.
+
+### Mode A status update (2026-07-12)
+
+Deploying Terminus on `vanessapi` for Mode A testing is blocked: the Pi's
+userspace is 32-bit Raspbian bullseye (`armhf`), and Terminus's own images
+(Postgres 18, Valkey 9, the Terminus app image) only publish `amd64`/`arm64`
+manifests — no 32-bit ARM builds exist to pull. No other 64-bit host is
+available right now. This is unresolved and not being actively worked around
+(would require reimaging the Pi's OS or sourcing a different host); it's part
+of why Mode B — which turns out to need nothing Docker-based, just the apt
+`chromium-browser` package that already works on this exact 32-bit install —
+is the more immediately viable path forward.

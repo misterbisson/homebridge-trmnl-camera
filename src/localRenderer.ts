@@ -14,7 +14,7 @@ const DEFAULT_SCREEN_WIDTH = 800;
 const DEFAULT_SCREEN_HEIGHT = 480;
 const DEFAULT_CHROMIUM_PATH = 'chromium-browser';
 /** Time to let plugins.js's data-value-fit autosizing settle before the screenshot is taken. */
-const RENDER_SETTLE_MS = 3000;
+const RENDER_SETTLE_MS = 4000;
 
 const liquid = new Liquid();
 
@@ -70,7 +70,7 @@ export async function renderRecipe(options: LocalRenderOptions): Promise<{ image
 
   const width = options.screenWidth ?? DEFAULT_SCREEN_WIDTH;
   const height = options.screenHeight ?? DEFAULT_SCREEN_HEIGHT;
-  const pageHtml = buildPage(contentHtml, width, height);
+  const pageHtml = buildPage(contentHtml);
   const imageBuffer = await screenshotHtml(pageHtml, width, height, options.chromiumPath ?? DEFAULT_CHROMIUM_PATH);
 
   return { imageBuffer, contentType: 'image/png' };
@@ -199,26 +199,31 @@ async function renderMarkup(fullLiquid: string, sharedLiquid: string | undefined
   return [shared, full].filter(Boolean).join('\n\n');
 }
 
-function buildPage(contentHtml: string, width: number, height: number): string {
+/**
+ * Matches usetrmnl/trmnlp's own render_html.erb (TRMNL's official local
+ * preview tool) as closely as possible: bare .screen class with no
+ * width/height/overflow override (plugins.css sizes it intrinsically), the
+ * Inter font it expects, and the script loaded in <head> un-deferred, same as
+ * both trmnlp and Terminus do it. See docs/architecture.md's "localRenderer.ts
+ * status" note for why the earlier version (explicit .screen sizing +
+ * overflow:hidden on .screen) silently pushed .title_bar out of frame.
+ */
+function buildPage(contentHtml: string): string {
   return `<!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,shrink-to-fit=no">
 <link rel="stylesheet" href="${FRAMEWORK_CSS_URL}">
-<style>
-  html, body { margin: 0; padding: 0; }
-  body.trmnl { display: flex; align-items: center; justify-content: center; }
-  .screen { width: ${width}px; height: ${height}px; overflow: hidden; }
-</style>
+<script src="${FRAMEWORK_JS_URL}"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap" rel="stylesheet">
 </head>
-<body class="trmnl">
+<body class="environment trmnl">
 <div class="screen">
 <div class="view view--full">
 ${contentHtml}
 </div>
 </div>
-<script src="${FRAMEWORK_JS_URL}"></script>
 </body>
 </html>
 `;

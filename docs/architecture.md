@@ -152,21 +152,42 @@ the framework CSS. Verified via a throwaway script driving the Pi's
 vitest test that spawns Chromium (network + binary dependent, doesn't belong
 in CI as-is).
 
-One real bug found and fixed in the process: the content must be wrapped in
-`<div class="view view--full">…</div>` inside `.screen` — omitting that
-wrapper (easy to miss; Terminus's own layout transform does this, but it
-wasn't obvious until tested) left `data-value-fit`-sized text invisible even
-though the framework CSS/JS had loaded fine. `RENDER_SETTLE_MS` (the
-`--virtual-time-budget` passed to Chromium) is 3000ms — confirmed sufficient
-even though `plugins.css` alone is a surprisingly large ~13.5MB download.
+Two real bugs found and fixed in the process, both by diffing against
+`usetrmnl/trmnlp`'s own `web/views/render_html.erb` (TRMNL's official local
+plugin-preview tool — the single best ground truth for "how is a plugin
+supposed to be wrapped for screenshotting," since that's exactly its job):
 
-Not yet built: the settings-form values used in this test were all defaults
-(no custom fields required for this particular Recipe) — a Recipe with real
-required custom fields (e.g. VRM Dashboard's `vrm_token`) hasn't been exercised
-yet. Also unverified: the `.title_bar` (icon/label/tags footer) rendered
-correctly in an earlier debug pass but wasn't visible in the final cropped
-screenshot — worth confirming it's actually present at the bottom of the frame
-before calling visual output "done," not just the main content area.
+1. Content must be wrapped in `<div class="view view--full">…</div>` inside
+   `.screen` — omitting that wrapper (easy to miss; Terminus's own layout
+   transform does this too, but it wasn't obvious until tested) left
+   `data-value-fit`-sized text invisible even though the framework CSS/JS had
+   loaded fine.
+2. `.screen` must **not** get explicit `width`/`height`/`overflow` CSS from
+   us — `plugins.css` sizes it intrinsically, and trmnlp's own template sets
+   none of those either. The original version of this code set all three,
+   which silently pushed `.title_bar` (the icon/label/tags footer) out of the
+   visible frame. Also missing: the Inter font (`fonts.googleapis.com`),
+   which trmnlp's template loads and `plugins.css` expects — without it,
+   text fell back to a generic sans-serif.
+
+Current state after both fixes: the main content area (quote text, book
+title, author, correctly sized and typeset in Inter/serif) renders correctly
+against live data. `.title_bar` now renders *as a box* (its background is
+visible) but its contents — icon, `{{ trmnl.plugin_settings.instance_name }}`,
+`{{ tags | join: ", " }}` — are not visible inside it. Ruled out: render
+timing (identical result from `RENDER_SETTLE_MS` 3000 through 8000ms) and the
+hotlinked icon URL (resolves fine, 200, when redirects are followed, which a
+real browser does automatically). Leading unconfirmed hypothesis: this
+Recipe's `settings.yml` pins `framework_version: 3.1.1`, but we always hotlink
+`.../latest/plugins.css`+`.js` — if "latest" has since diverged from 3.1.1,
+`.title_bar`'s internal layout could easily have changed. Worth checking
+whether the framework CDN serves versioned URLs (`.../3.1.1/plugins.css`) we
+could pin to instead of `latest`, before spending more time on this.
+
+Not yet exercised: every custom field in this test Recipe was `author_bio`
+(filtered out, not a real setting) — a Recipe with a real required custom
+field (e.g. VRM Dashboard's `vrm_token`) hasn't been run through the field
+→ `polling_url`/`polling_headers` Liquid-templating path yet.
 
 ### Sequencing
 

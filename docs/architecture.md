@@ -485,6 +485,17 @@ tested locally:
    same local network as `vanessapi` — HomeKit accessory pairing depends on
    local mDNS discovery, which doesn't traverse the Tailscale connection used
    for remote administration. Pick this up next time on-site.
+   - Investigated (2026-07-14) whether a real mDNS problem on `vanessapi`
+     could be the cause instead: the Homebridge container's own bundled
+     avahi-daemon conflicts with the host's separate avahi (both share one
+     interface via `network_mode: host`), producing a constant cosmetic
+     "Host name conflict" log loop. Confirmed the fix (`ENABLE_AVAHI=0`)
+     actually breaks something else — `homebridge-signalk`'s `.local`
+     device resolution (`venus.local`) — so it was tested live and reverted;
+     documented as a known, deliberate tradeoff in `homebridge-pi`'s
+     `docker-compose.yml` rather than fixed. Not a `homebridge-trmnl-camera`
+     issue either way — noted here so a future session doesn't mistake the
+     log noise for evidence of a bug in this plugin specifically.
 2. The `.title_bar`/layout-fit issue (see "`localRenderer.ts` status" above),
    if it turns out to matter for real use.
 3. Ideas parked in [docs/roadmap.md](roadmap.md) (e.g. a third mode that

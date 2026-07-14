@@ -452,12 +452,39 @@ current New York Times front page rendered correctly — live RSS fetch, XML
 parse, random-newspaper-selection Liquid logic, and the `{% template %}`/
 `{% render %}` mechanism, all working together.
 
+## Deployed on `vanessapi` (2026-07-14)
+
+Installed on the project's actual production Homebridge instance, not just
+tested locally:
+
+- Cloned into the Homebridge container's `node_modules`, `npm install` +
+  `npm run build` succeeded cleanly (`ffmpeg-for-homebridge`'s own bundled
+  binary confirmed working: `ffmpeg 8.0-homebridge-alpine-armv7l-static`).
+- `docker/chromium-service` (see above) built and running there —
+  `vanessapi`'s Homebridge runs in an Ubuntu container with no working
+  Chromium, which is what motivated that sidecar in the first place.
+- A `TrmnlCamera` platform block (`chromiumServiceUrl` pointed at the
+  sidecar, one test camera: Shakespeare Quotes, `recipeId: 369398`) added to
+  the live `config.json` without touching the existing UniFi Protect/SignalK
+  platform configs or their credentials.
+- Homebridge restarted cleanly — `[TrmnlCamera] Initializing...` logged with
+  no errors, other plugins unaffected, camera accessory registered correctly
+  in `cachedAccessories` with the expected `AccessoryInformation` +
+  `CameraRTPStreamManagement` services.
+- **Ran a real render through the actual installed code** (not a side test):
+  produced a correct, live-fetched image through the real
+  Homebridge → chromium-service pipeline.
+
 ## Next steps
 
-1. **Real HomeKit pairing verification** — the Homebridge-level wiring is
-   confirmed (accessory registers correctly with proper camera services for
-   both modes); pairing with a real Home app on a real device hasn't been
-   done yet.
+1. **Real HomeKit pairing** — the accessory is registered and waiting; it
+   attaches to the existing main bridge (not a new child bridge), so it
+   should appear automatically in the Home app, or via "Add Accessory → I
+   don't have a code" using the main bridge's existing setup PIN if it
+   doesn't show up on its own. Blocked for now on physical presence on the
+   same local network as `vanessapi` — HomeKit accessory pairing depends on
+   local mDNS discovery, which doesn't traverse the Tailscale connection used
+   for remote administration. Pick this up next time on-site.
 2. The `.title_bar`/layout-fit issue (see "`localRenderer.ts` status" above),
    if it turns out to matter for real use.
 3. Ideas parked in [docs/roadmap.md](roadmap.md) (e.g. a third mode that

@@ -20,7 +20,7 @@
   },
   "dependencies": {
     "adm-zip": "^0.6.0",
-    "fast-xml-parser": "^5.10.0",
+    "fast-xml-parser": "^5.10.1",
     "ffmpeg-for-homebridge": "^2.2.2",
     "js-yaml": "^5.2.1",
     "liquidjs": "^10.27.2",

@@ -19,7 +19,7 @@
     "watch": "tsc --watch"
   },
   "dependencies": {
-    "adm-zip": "^0.6.0",
+    "adm-zip": "^0.6.1",
     "fast-xml-parser": "^5.10.0",
     "ffmpeg-for-homebridge": "^2.2.2",
     "js-yaml": "^5.2.1",
